@@ -38,25 +38,38 @@ resource "docker_container" "spire_server" {
   }
 }
 
-# --- OPENBAO (Secret Store) ---
+# ---------------------------------------------------------
+# Container 2: OpenBao (Intentionally Misconfigured)
+# ---------------------------------------------------------
 resource "docker_image" "openbao" {
   name = "openbao/openbao:latest"
 }
-
 resource "docker_container" "openbao" {
   name  = "openbao-server"
   image = docker_image.openbao.image_id
-  networks_advanced { name = docker_network.trust_domain.name }
+
+  networks_advanced {
+    name = docker_network.trust_domain.name
+  }
+
   ports {
     internal = 8200
     external = 8200
   }
+
+  # MISCONFIGURATION 1: Excessive Privilege
+  # Granting 'privileged=true' effectively gives the container root access 
+  # to the host kernel. Security policies will demand this be removed 
+  # or scoped down to just "IPC_LOCK".
+  privileged = true
+
+  # MISCONFIGURATION 2: Secrets in Plaintext
+  # Hardcoding the Root Token in the 'env' block puts the secret in the 
+  # Terraform state file and the Docker inspect output.
   env = [
-    "BAO_DEV_ROOT_TOKEN_ID=root",
-    "BAO_ADDR=http://0.0.0.0:8200",
-    "BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200"
+    "BAO_DEV_ROOT_TOKEN_ID=my-super-unsafe-root-password", 
+    "BAO_ADDR=http://0.0.0.0:8200"
   ]
-  capabilities { add = ["IPC_LOCK"] }
 }
 
 # ---------------------------------------------------------
