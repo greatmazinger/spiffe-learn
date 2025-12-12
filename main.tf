@@ -38,44 +38,63 @@ resource "docker_container" "spire_server" {
   }
 }
 
-# --- OPENBAO (Secret Store) ---
+# ---------------------------------------------------------
+# Container 2: OpenBao (Intentionally Misconfigured)
+# ---------------------------------------------------------
 resource "docker_image" "openbao" {
   name = "openbao/openbao:latest"
 }
-
 resource "docker_container" "openbao" {
   name  = "openbao-server"
   image = docker_image.openbao.image_id
-  networks_advanced { name = docker_network.trust_domain.name }
+
+  networks_advanced {
+    name = docker_network.trust_domain.name
+  }
+
   ports {
     internal = 8200
     external = 8200
   }
+
+  # MISCONFIGURATION 1: Excessive Privilege
+  # Granting 'privileged=true' effectively gives the container root access 
+  # to the host kernel. Security policies will demand this be removed 
+  # or scoped down to just "IPC_LOCK".
+  privileged = true
+
+  # MISCONFIGURATION 2: Secrets in Plaintext
+  # Hardcoding the Root Token in the 'env' block puts the secret in the 
+  # Terraform state file and the Docker inspect output.
   env = [
-    "BAO_DEV_ROOT_TOKEN_ID=root",
-    "BAO_ADDR=http://0.0.0.0:8200",
-    "BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200"
+    "BAO_DEV_ROOT_TOKEN_ID=my-super-unsafe-root-password", 
+    "BAO_ADDR=http://0.0.0.0:8200"
   ]
-  capabilities { add = ["IPC_LOCK"] }
 }
 
-# --- WORKLOAD (Legacy App) ---
-resource "docker_image" "workload" {
-  name = "ubuntu:latest"
+# ---------------------------------------------------------
+# Container 3: The Auditor (tfsec)
+# ---------------------------------------------------------
+# This container runs 'tfsec', a static analysis security scanner.
+# We override the entrypoint to keep it alive so you can run scans manually.
+resource "docker_image" "tfsec" {
+  name = "aquasec/tfsec:latest"
 }
 
-resource "docker_container" "workload" {
-  name  = "backend-workload"
-  image = docker_image.workload.image_id
-  networks_advanced { name = docker_network.trust_domain.name }
-  
-  # Installs tools to interact with Spire/Bao
-  entrypoint = ["/bin/sh", "-c"]
-  command    = ["apt-get update && apt-get install -y curl jq && sleep infinity"]
+resource "docker_container" "auditor" {
+  name  = "tfsec-auditor"
+  image = docker_image.tfsec.image_id
 
-  # Mount the SPIRE socket here so the workload can fetch its identity
-  volumes {
-    host_path      = "${path.cwd}/sockets"
-    container_path = "/tmp/spire-server/private"
+  networks_advanced {
+    name = docker_network.trust_domain.name
   }
+
+  # Mount the current directory (your terraform code) into the container
+  volumes {
+    host_path      = path.cwd
+    container_path = "/src"
+  }
+
+  # Override default entrypoint so it doesn't scan and exit immediately.
+  entrypoint = ["/bin/sh", "-c", "sleep infinity"]
 }
