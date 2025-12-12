@@ -59,23 +59,29 @@ resource "docker_container" "openbao" {
   capabilities { add = ["IPC_LOCK"] }
 }
 
-# --- WORKLOAD (Legacy App) ---
-resource "docker_image" "workload" {
-  name = "ubuntu:latest"
+# ---------------------------------------------------------
+# Container 3: The Auditor (tfsec)
+# ---------------------------------------------------------
+# This container runs 'tfsec', a static analysis security scanner.
+# We override the entrypoint to keep it alive so you can run scans manually.
+resource "docker_image" "tfsec" {
+  name = "aquasec/tfsec:latest"
 }
 
-resource "docker_container" "workload" {
-  name  = "backend-workload"
-  image = docker_image.workload.image_id
-  networks_advanced { name = docker_network.trust_domain.name }
-  
-  # Installs tools to interact with Spire/Bao
-  entrypoint = ["/bin/sh", "-c"]
-  command    = ["apt-get update && apt-get install -y curl jq && sleep infinity"]
+resource "docker_container" "auditor" {
+  name  = "tfsec-auditor"
+  image = docker_image.tfsec.image_id
 
-  # Mount the SPIRE socket here so the workload can fetch its identity
-  volumes {
-    host_path      = "${path.cwd}/sockets"
-    container_path = "/tmp/spire-server/private"
+  networks_advanced {
+    name = docker_network.trust_domain.name
   }
+
+  # Mount the current directory (your terraform code) into the container
+  volumes {
+    host_path      = path.cwd
+    container_path = "/src"
+  }
+
+  # Override default entrypoint so it doesn't scan and exit immediately.
+  entrypoint = ["/bin/sh", "-c", "sleep infinity"]
 }
